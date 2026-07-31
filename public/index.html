@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>নিজস্ব পি টু পি সিসি ক্যামেরা</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #121212; color: white; text-align: center; padding: 15px; margin: 0; }
+        .box { background: #1e1e1e; max-width: 450px; margin: auto; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        video { width: 100%; height: 320px; background: black; border-radius: 8px; margin-top: 15px; object-fit: cover; }
+        input, button { padding: 12px; margin: 6px 0; font-size: 16px; border-radius: 6px; border: none; width: 90%; }
+        input { background: #333; color: white; border: 1px solid #555; text-align: center; }
+        button { background: #28a745; color: white; font-weight: bold; cursor: pointer; }
+        .badge { background: #ffc107; color: black; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="box">
+    <h2>📡 পাওয়ারফুল সিসি ক্যামেরা</h2>
+    <span id="status" class="badge">অপেক্ষমাণ...</span>
+    <br><br>
+    
+    <input type="text" id="roomInput" placeholder="৪ সংখ্যার রুম কোড দিন (যেমন: 1234)" maxlength="4">
+    <button onclick="startAsCamera()">📷 ক্যামেরা হিসেবে চালু করুন</button>
+    <button onclick="startAsViewer()" style="background: #007bff;">👁️ মনিটরে লাইভ দেখুন</button>
+
+    <video id="videoElement" autoplay playsinline muted></video>
+</div>
+
+<script>
+    const socket = io();
+    let localStream;
+    let peerConnection;
+    let cameraSocketId;
+
+    const config = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+    };
+
+    // সিসি ক্যামেরা মোড
+    async function startAsCamera() {
+        const roomId = document.getElementById('roomInput').value;
+        if (!roomId) return alert("রুম কোড দিন!");
+
+        socket.emit('register-camera', roomId);
+        document.getElementById('status').innerText = "🔴 ক্যামেরা ব্যাকগ্রাউন্ডে রেডি";
+        document.getElementById('status').style.background = "#28a745";
+        document.getElementById('status').style.color = "#fff";
+
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+            document.getElementById('videoElement').srcObject = localStream;
+        } catch (e) {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById('videoElement').srcObject = localStream;
+        }
+
+        socket.on('viewer-joined', async (viewerId) => {
+            peerConnection = new RTCPeerConnection(config);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('signal', { target: viewerId, signal: { candidate: event.candidate } });
+                }
+            };
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('signal', { target: viewerId, signal: { sdp: offer } });
+        });
+
+        socket.on('signal', async (data) => {
+            if (data.signal.sdp) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+            } else if (data.signal.candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+            }
+        });
+    }
+
+    // ভিউয়ার মোড
+    async function startAsViewer() {
+        const roomId = document.getElementById('roomInput').value;
+        if (!roomId) return alert("রুম কোড দিন!");
+
+        document.getElementById('status').innerText = "কানেক্ট করা হচ্ছে...";
+
+        peerConnection = new RTCPeerConnection(config);
+
+        peerConnection.ontrack = (event) => {
+            const videoWin = document.getElementById('videoElement');
+            videoWin.srcObject = event.streams[0];
+            videoWin.muted = false;
+            videoWin.play();
+            document.getElementById('status').innerText = "🟢 লাইভ সিসি ক্যামেরা সংযুক্ত";
+            document.getElementById('status').style.background = "#28a745";
+            document.getElementById('status').style.color = "#fff";
+        };
+
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate && cameraSocketId) {
+                socket.emit('signal', { target: cameraSocketId, signal: { candidate: event.candidate } });
+            }
+        };
+
+        socket.emit('join-room', roomId);
+
+        socket.on('signal', async (data) => {
+            cameraSocketId = data.sender;
+            if (data.signal.sdp) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                socket.emit('signal', { target: data.sender, signal: { sdp: answer } });
+            } else if (data.signal.candidate) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
