@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 
 const app = express();
@@ -14,7 +15,12 @@ const io = new Server(server, {
 });
 
 // public ফোল্ডারের ফাইলগুলোকে স্ট্যাটিক হিসেবে পরিবেশন করা
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// রুট রাউট: ব্রাউজারে হোম পেজ অনুরোধ করলে সরাসরি public/index.html পাঠাবে
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 io.on('connection', (socket) => {
     console.log('একটি নতুন ডিভাইস যুক্ত হয়েছে:', socket.id);
